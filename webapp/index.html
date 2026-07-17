@@ -84,6 +84,26 @@
   .play-btn svg{width:18px;height:18px;fill:currentColor;display:block;}
   .scrub{flex:1;accent-color:var(--ink);}
   .time{font-family:'Archivo',ui-monospace,monospace;font-variant-numeric:tabular-nums;font-size:13px;font-weight:600;min-width:90px;text-align:right;}
+  .scrub-wrap{flex:1;display:flex;flex-direction:column;min-width:0;}
+  .scrub-wrap .scrub{flex:none;width:100%;}
+  .sections{position:relative;height:52px;margin:0 7px;}
+  .sections[hidden]{display:none;}
+  .sec-mark{position:absolute;bottom:0;height:100%;transform:translateX(-50%);display:flex;flex-direction:column;
+    align-items:center;justify-content:flex-end;background:none;border:none;padding:0 9px;margin:0;
+    cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;}
+  .sec-tick{width:2px;height:7px;background:var(--ink);opacity:.45;}
+  .sec-label{display:none;white-space:nowrap;font-weight:800;text-transform:uppercase;letter-spacing:.4px;
+    border:1.5px solid var(--ink);background:var(--yellow);color:var(--ink);border-radius:4px;
+    padding:2px 6px;margin-bottom:2px;}
+  .sec-mark.is-cur{z-index:3;}
+  .sec-mark.is-cur .sec-tick{opacity:1;height:11px;}
+  .sec-mark.is-cur .sec-label{display:block;font-size:10px;background:var(--ink);color:var(--paper);margin-bottom:20px;}
+  .sec-mark.is-near{z-index:2;}
+  .sec-mark.is-near .sec-tick{opacity:.8;height:9px;}
+  .sec-mark.is-near .sec-label{display:block;font-size:8px;}
+  .sec-mark.is-clip .sec-label{visibility:hidden;}
+  .sec-mark.edge-l{transform:none;align-items:flex-start;}
+  .sec-mark.edge-r{transform:translateX(-100%);align-items:flex-end;}
 
   .band{background:var(--yellow);border-bottom:1.5px solid var(--ink);}
   .bandrow{display:flex;align-items:center;gap:14px;padding:12px 16px;flex-wrap:wrap;}
@@ -137,6 +157,9 @@
   @media (max-width:560px){
     .song-title{font-size:30px;}
     .header,.nowplaying,.transport,.bandrow,.mixer-head,.mixer,.foot{padding-left:14px;padding-right:14px;}
+    .sections{height:46px;}
+    .sec-mark{padding:0 7px;}
+    .sec-mark.is-cur .sec-label{margin-bottom:16px;}
   }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -163,7 +186,10 @@
     </div>
     <div class="transport">
       <button class="play-btn" id="playBtn" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></button>
-      <input class="scrub" id="scrub" type="range" min="0" max="1" step="0.001" value="0" disabled />
+      <div class="scrub-wrap">
+        <div class="sections" id="sections" hidden></div>
+        <input class="scrub" id="scrub" type="range" min="0" max="1" step="0.001" value="0" disabled />
+      </div>
       <div class="time"><span id="pos">0:00</span> / <span id="total">0:00</span></div>
     </div>
     <div class="band">
@@ -235,6 +261,9 @@ let currentSlot = null, advancing = false;
 let tailSources = [], tailNodes = [];
 let clickOn = true, clickVol = 0.501, guideOn = true, guideVol = 0.85;
 let audioUnlocked = false, silentAudioEl = null;
+let songSectionsAll = [];                    // full fetched list for the current song
+let songSections = [], sectionIdx = -1;      // rendered subset ({label, sec}), current index
+const SECTIONS_CACHE = new Map();            // songId -> Promise<Array|null>
 
 const $ = id => document.getElementById(id);
 const fmt = t => { t=Math.max(0,t|0); const m=(t/60)|0,s=t%60; return m+":"+(s<10?"0":"")+s; };
@@ -476,6 +505,7 @@ function tick(){
   }
   $("pos").textContent = fmt(pos);
   if(!scrubbing) $("scrub").value = total ? (pos/total) : 0;
+  if(songSections.length && !scrubbing){ const i = sectionIndexAt(pos); if(i !== sectionIdx) updateSectionFocus(i); }
   updateMeters();
   raf = requestAnimationFrame(tick);
 }
@@ -484,6 +514,13 @@ function tick(){
 async function loadSong(index, keyFolder, keyName){
   currentSong = SONGS[index];
   currentIndex = index;
+  songSectionsAll = []; songSections = []; sectionIdx = -1; renderSections();
+  const sid = currentSong.id;
+  fetchSections(sid).then(arr => {
+    if(!currentSong || currentSong.id !== sid) return;
+    songSectionsAll = arr || [];
+    renderSections();
+  });
   $("songTitle").textContent = currentSong.title;
   const keys = normalizeKeys(currentSong.keys && currentSong.keys.length ? currentSong.keys : (currentSong.originalKey ? [currentSong.originalKey] : []));
   keySel.innerHTML = "";
@@ -545,6 +582,7 @@ async function loadKey(keyFolder, keyName, preserve){
   $("scrub").value = total ? (songStartSec()/total) : 0;
   $("playBtn").disabled = false; $("scrub").disabled = false;
   setStatus("ready","idle");
+  renderSections();
   if(!raf) raf = requestAnimationFrame(tick);   // keep meters alive even when paused
   if(preserve && preserve.wasPlaying) play();
 }
@@ -553,6 +591,81 @@ function capturePreserve(){
   const mix = {};
   tracks.forEach(t => mix[t.folder] = { volumeDb:t.volumeDb, solo:t.solo, mute:t.mute });
   return { pos: currentPos(), wasPlaying: isPlaying || starting, mix };
+}
+
+/* ---- song sections (songs/<id>/sections.json at the song root) ---- */
+function fetchSections(songId){
+  if(!SECTIONS_CACHE.has(songId)){
+    SECTIONS_CACHE.set(songId, (async () => {
+      try{
+        const res = await fetch(BASE_URL + "/songs/" + encodeURIComponent(songId) + "/sections.json", { cache:"no-store" });
+        if(!res.ok) return null;
+        const j = await res.json();
+        if(j.version !== 1 || !Array.isArray(j.sections)) return null;
+        const arr = j.sections
+          .filter(s => s && typeof s.label === "string" && Number.isFinite(s.ms) && s.ms >= 0)
+          .map(s => ({ label: s.label, sec: s.ms/1000 }))
+          .sort((a,b) => a.sec - b.sec);
+        return arr.length >= 2 ? arr : null;
+      }catch(e){ return null; }
+    })());
+  }
+  return SECTIONS_CACHE.get(songId);
+}
+
+function sectionIndexAt(pos){
+  if(!songSections.length) return -1;
+  let i = sectionIdx >= 0 ? Math.min(sectionIdx, songSections.length-1) : 0;
+  while(i > 0 && songSections[i].sec > pos) i--;
+  while(i < songSections.length-1 && songSections[i+1].sec <= pos) i++;
+  return songSections[i].sec <= pos ? i : -1;
+}
+
+function renderSections(){
+  const band = $("sections");
+  band.innerHTML = "";
+  const usable = total ? songSectionsAll.filter(s => s.sec < total) : [];
+  if(usable.length < 2){ band.hidden = true; songSections = []; sectionIdx = -1; return; }
+  usable.forEach((s, i) => {
+    const pct = s.sec / total * 100;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "sec-mark" + (pct < 4 ? " edge-l" : pct > 96 ? " edge-r" : "");
+    b.dataset.i = i;
+    b.style.left = pct.toFixed(3) + "%";
+    b.title = s.label;
+    b.innerHTML = '<span class="sec-label"></span><span class="sec-tick"></span>';
+    b.querySelector(".sec-label").textContent = s.label;
+    band.appendChild(b);
+  });
+  songSections = usable;
+  band.hidden = false;
+  sectionIdx = -1;
+  updateSectionFocus(sectionIndexAt(currentPos()));
+}
+
+function updateSectionFocus(idx){
+  sectionIdx = idx;
+  const band = $("sections");
+  if(band.hidden) return;
+  const reach = window.matchMedia("(max-width:560px)").matches ? 1 : 2;
+  const marks = band.children;
+  const visible = [];
+  for(let i=0;i<marks.length;i++){
+    const d = idx < 0 ? Infinity : Math.abs(i - idx);
+    marks[i].classList.toggle("is-cur", d === 0);
+    marks[i].classList.toggle("is-near", d > 0 && d <= reach);
+    marks[i].classList.remove("is-clip");
+    if(d <= reach) visible.push({ el: marks[i], prio: d });
+  }
+  // hide lower-priority labels that overlap a higher-priority one
+  const kept = [];
+  visible.sort((a,b) => a.prio - b.prio);
+  for(const v of visible){
+    const r = v.el.querySelector(".sec-label").getBoundingClientRect();
+    if(kept.some(k => r.left < k.right + 3 && r.right > k.left - 3 && r.top < k.bottom && r.bottom > k.top)) v.el.classList.add("is-clip");
+    else kept.push(r);
+  }
 }
 
 // ---- chord chart ----
@@ -861,6 +974,7 @@ async function initCatalog(){
 
 function setIdlePlayer(){
   currentSong = null; currentSlot = null; setSlotActive(null);
+  songSectionsAll = []; songSections = []; sectionIdx = -1; renderSections();
   $("songTitle").textContent = "\u2014";
   updateChartBtn();
   $("sub").textContent = "No song loaded";
@@ -900,8 +1014,18 @@ document.addEventListener("visibilitychange", ()=>{
   if(document.hidden && ctx && ctx.state === "running" && !isPlaying && !starting){ try{ ctx.suspend(); }catch(e){} }
 });
 const scrub = $("scrub");
-scrub.addEventListener("input", e => { scrubbing=true; $("pos").textContent = fmt(parseFloat(e.target.value)*total); });
+scrub.addEventListener("input", e => {
+  scrubbing=true;
+  const p = parseFloat(e.target.value)*total;
+  $("pos").textContent = fmt(p);
+  if(songSections.length){ const i = sectionIndexAt(p); if(i !== sectionIdx) updateSectionFocus(i); }
+});
 scrub.addEventListener("change", e => { scrubbing=false; seek(parseFloat(e.target.value)*total); });
+$("sections").addEventListener("click", e => {
+  const b = e.target.closest(".sec-mark"); if(!b) return;
+  const s = songSections[+b.dataset.i]; if(!s || $("scrub").disabled) return;
+  seek(Math.min(s.sec, Math.max(0, total - 0.05)));
+});
 
 initCatalog();
 </script>
