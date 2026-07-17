@@ -168,6 +168,7 @@
     <div class="band">
       <div class="bandrow">
         <div class="infobar">
+          <div class="field"><label>Album</label><div class="display" id="albumDisp">--</div></div>
           <div class="field"><label>BPM</label><div class="display" id="bpmDisp">--</div></div>
           <div class="field"><label>Time</label><div class="display" id="tsDisp">--</div></div>
         </div>
@@ -199,10 +200,14 @@
 
 <script>
 /* ============================================================
-   Points at the R2 bucket public URL (no trailing slash).
-   Layout: songs.json, songs/<id>/<key>/manifest.json, songs/<id>/<key>/<track>/0001.mp3
+   Catalog lives in the Supabase `songs` table (read via PostgREST
+   with the public anon key — read-only through RLS).
+   Audio lives in the public Supabase Storage bucket `songs`:
+   songs/<id>/<key>/manifest.json, songs/<id>/<key>/<track>/0001.mp3
    ============================================================ */
-const BASE_URL = "https://pub-a4e6ea74e6de48de816b49be05d493cc.r2.dev".replace(/\/+$/, "");
+const SUPABASE_URL = "https://faaxtwjlrxnlotojfcqw.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZhYXh0d2pscnhubG90b2pmY3F3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM0NDUyMTUsImV4cCI6MjA5OTAyMTIxNX0.Pze-eIWcr_wgt14RF5ntEhvG-D1vJSqcOw5WzadXQ7k";
+const BASE_URL = SUPABASE_URL + "/storage/v1/object/public/songs";
 if(window.pdfjsLib){ pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"; }
 
 const ICON_PLAY  = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
@@ -500,6 +505,7 @@ async function loadKey(keyFolder, keyName, preserve){
 
   songBase = BASE_URL + "/songs/" + currentSong.id + "/" + keyFolder;
   bpm = currentSong.bpm || 72;
+  $("albumDisp").textContent = currentSong.album || "—";
   $("bpmDisp").textContent = bpm; $("tsDisp").textContent = currentSong.timeSig || "4/4";
   updateChartBtn();
 
@@ -609,6 +615,7 @@ async function renderPdf(url){
 // ---- setlist ----
 function songMeta(song){
   const bits = [];
+  if(song.album) bits.push(song.album);
   if(song.bpm) bits.push(song.bpm + " BPM");
   if(song.timeSig) bits.push(song.timeSig);
   return bits.join("  \u00B7  ");
@@ -689,7 +696,7 @@ function wireSlot(s, row){
     clr.addEventListener("mousedown", e=>{ e.preventDefault(); selectSong(null); });
     opts.appendChild(clr); currentOpts.push({ el:clr, value:null });
     SONGS.forEach((song,i)=>{
-      if(f && !song.title.toLowerCase().includes(f)) return;
+      if(f && !song.title.toLowerCase().includes(f) && !(song.album||"").toLowerCase().includes(f)) return;
       const o=document.createElement("div"); o.className="opt"; o.textContent=song.title;
       o.addEventListener("mousedown", e=>{ e.preventDefault(); selectSong(i); });
       const k = currentOpts.length;
@@ -819,18 +826,26 @@ function startCrossfade(nextSlot){
 async function initCatalog(){
   setStatus("loading","idle");
   $("sub").textContent = "Loading set list...";
-  let cat;
+  let rows;
   try{
-    const res = await fetch(BASE_URL + "/songs.json", { cache: "no-store" });
+    const res = await fetch(SUPABASE_URL + "/rest/v1/songs?select=*&order=title.asc", {
+      cache: "no-store",
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + SUPABASE_ANON_KEY }
+    });
     if(!res.ok) throw new Error("HTTP " + res.status);
-    cat = await res.json();
+    rows = await res.json();
   }catch(e){
-    $("sub").textContent = "Could not load the set list from storage.";
-    $("mixer").innerHTML = '<div class="empty">Could not reach ' + BASE_URL + '/songs.json. Check that the bucket is public and CORS allows this site.</div>';
+    $("sub").textContent = "Could not load the set list.";
+    $("mixer").innerHTML = '<div class="empty">Could not load the songs table from Supabase. Check the project URL, anon key and RLS read policy.</div>';
     setStatus("offline","idle");
     return;
   }
-  SONGS = Array.isArray(cat) ? cat : (cat.songs || []);
+  SONGS = rows.map(r => ({
+    id: r.id, title: r.title, album: r.album,
+    bpm: r.bpm == null ? 0 : Number(r.bpm),
+    timeSig: r.time_sig, originalKey: r.original_key,
+    keys: r.keys || [], chart: r.chart
+  }));
   buildSetlist();
   if(SONGS.length === 0){
     $("sub").textContent = "Set list is empty.";
@@ -846,7 +861,7 @@ function setIdlePlayer(){
   $("songTitle").textContent = "\u2014";
   updateChartBtn();
   $("sub").textContent = "No song loaded";
-  $("bpmDisp").textContent = "--"; $("tsDisp").textContent = "--";
+  $("albumDisp").textContent = "--"; $("bpmDisp").textContent = "--"; $("tsDisp").textContent = "--";
   $("keySel").innerHTML = "";
   $("pinned").style.display = "none";
   $("mixer").innerHTML = '<div class="empty">Pick songs in the setlist, then press play on a slot.</div>';

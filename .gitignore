@@ -1,0 +1,5 @@
+.DS_Store
+scripts/.env
+webapp/.vercel
+.vercel
+supabase/.temp/

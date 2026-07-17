@@ -136,14 +136,14 @@ for sid, keys in found.items():
         if entry.get("originalKey") not in keys: entry["originalKey"] = keys[0]
     else:
         new_ids.append(sid)
-        entry = {"id": sid, "title": sid.replace("-", " ").title(),
+        entry = {"id": sid, "title": sid.replace("-", " ").title(), "album": "",
                  "bpm": 0, "timeSig": "4/4", "originalKey": keys[0], "keys": keys}
     out.append(entry)
 
 json.dump({"songs": out}, open(gen_path, "w"), indent=2)
 print("Catalog draft written to:", gen_path)
 if new_ids:
-    print("New songs that still need a title, bpm, and original key:")
+    print("New songs that still need a title, album, bpm, and original key:")
     for n in new_ids: print("   -", n)
 else:
     print("No new songs to fill in.")
@@ -154,5 +154,5 @@ fi
 
 echo ""
 echo "Output: $OUT_ROOT"
-echo "Next: finish songs.generated.json (title, bpm, original key), rename it to songs.json,"
-echo "then upload the new song folders and songs.json to your bucket."
+echo "Next: finish songs.generated.json (title, album, bpm, original key), then publish with:"
+echo "  python3 upload-song.py <song-id>          (uploads chunks + upserts the song row)"
