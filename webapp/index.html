@@ -86,24 +86,32 @@
   .time{font-family:'Archivo',ui-monospace,monospace;font-variant-numeric:tabular-nums;font-size:13px;font-weight:600;min-width:90px;text-align:right;}
   .scrub-wrap{flex:1;display:flex;flex-direction:column;min-width:0;}
   .scrub-wrap .scrub{flex:none;width:100%;}
-  .sections{position:relative;height:52px;margin:0 7px;}
+  .sections{position:relative;height:52px;margin:0 7px;overflow:hidden;touch-action:pan-y;}
   .sections[hidden]{display:none;}
+  .sec-lane{position:relative;height:100%;will-change:transform;}
   .sec-mark{position:absolute;bottom:0;height:100%;transform:translateX(-50%);display:flex;flex-direction:column;
     align-items:center;justify-content:flex-end;background:none;border:none;padding:0 9px;margin:0;
     cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;}
   .sec-tick{width:2px;height:7px;background:var(--ink);opacity:.45;}
-  .sec-label{display:none;white-space:nowrap;font-weight:800;text-transform:uppercase;letter-spacing:.4px;
+  .sec-label{display:block;font-size:8px;white-space:nowrap;font-weight:800;text-transform:uppercase;letter-spacing:.4px;
     border:1.5px solid var(--ink);background:var(--yellow);color:var(--ink);border-radius:4px;
     padding:2px 6px;margin-bottom:2px;}
   .sec-mark.is-cur{z-index:3;}
   .sec-mark.is-cur .sec-tick{opacity:1;height:11px;}
-  .sec-mark.is-cur .sec-label{display:block;font-size:10px;background:var(--ink);color:var(--paper);margin-bottom:20px;}
-  .sec-mark.is-near{z-index:2;}
-  .sec-mark.is-near .sec-tick{opacity:.8;height:9px;}
-  .sec-mark.is-near .sec-label{display:block;font-size:8px;}
+  .sec-mark.is-cur .sec-label{font-size:10px;background:var(--ink);color:var(--paper);margin-bottom:20px;}
   .sec-mark.is-clip .sec-label{visibility:hidden;}
   .sec-mark.edge-l{transform:none;align-items:flex-start;}
   .sec-mark.edge-r{transform:translateX(-100%);align-items:flex-end;}
+  .zoom-row{display:flex;align-items:center;gap:8px;margin-top:8px;}
+  .zoom-row[hidden]{display:none;}
+  .zoom-btn{width:30px;height:30px;border:1.5px solid var(--ink);border-radius:8px;background:transparent;
+    color:var(--ink);font-family:inherit;font-weight:800;font-size:16px;cursor:pointer;flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;padding:0;}
+  .zoom-btn:disabled{opacity:.35;cursor:default;}
+  .overview{flex:1;height:10px;border:1.5px solid var(--ink);border-radius:5px;background:var(--card);
+    position:relative;touch-action:none;}
+  .overview.ov-idle{visibility:hidden;}
+  .ov-win{position:absolute;top:0;bottom:0;background:var(--ink);border-radius:3px;min-width:8px;cursor:grab;}
 
   .band{background:var(--yellow);border-bottom:1.5px solid var(--ink);}
   .bandrow{display:flex;align-items:center;gap:14px;padding:12px 16px;flex-wrap:wrap;}
@@ -160,6 +168,8 @@
     .sections{height:46px;}
     .sec-mark{padding:0 7px;}
     .sec-mark.is-cur .sec-label{margin-bottom:16px;}
+    .zoom-btn{width:40px;height:40px;}
+    .overview{height:14px;}
   }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -187,8 +197,13 @@
     <div class="transport">
       <button class="play-btn" id="playBtn" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></button>
       <div class="scrub-wrap">
-        <div class="sections" id="sections" hidden></div>
+        <div class="sections" id="sections" hidden><div class="sec-lane" id="secLane"></div></div>
         <input class="scrub" id="scrub" type="range" min="0" max="1" step="0.001" value="0" disabled />
+        <div class="zoom-row" id="zoomRow" hidden>
+          <button class="zoom-btn" id="zoomOut" type="button" title="Zoom out">&minus;</button>
+          <div class="overview" id="overview"><div class="ov-win" id="ovWin"></div></div>
+          <button class="zoom-btn" id="zoomIn" type="button" title="Zoom in">+</button>
+        </div>
       </div>
       <div class="time"><span id="pos">0:00</span> / <span id="total">0:00</span></div>
     </div>
@@ -264,6 +279,10 @@ let audioUnlocked = false, silentAudioEl = null;
 let songSectionsAll = [];                    // full fetched list for the current song
 let songSections = [], sectionIdx = -1;      // rendered subset ({label, sec}), current index
 const SECTIONS_CACHE = new Map();            // songId -> Promise<Array|null>
+const ZOOM_LEVELS = [1, 2, 4, 8];
+const MIN_VIEW_SEC = 20;                     // don't allow windows shorter than this
+let zoom = 1, viewStart = 0, followOn = true;
+let bandW = 0, labelW = [], lastPruneView = -1;
 
 const $ = id => document.getElementById(id);
 const fmt = t => { t=Math.max(0,t|0); const m=(t/60)|0,s=t%60; return m+":"+(s<10?"0":"")+s; };
@@ -490,6 +509,11 @@ function seek(t){
   if(isPlaying){ stopSources(); clearInterval(schedTimer); schedTimer=null; isPlaying=false; }
   setResumeFromPos(t);
   $("pos").textContent = fmt(songStartSec());
+  followOn = true;
+  if(zoom > 1 && (t < viewStart || t > viewStart + viewLen())){
+    viewStart = clampView(t - viewLen() / 2);
+    applyWindow(true);
+  }
   if(wasActive) play();
 }
 function tick(){
@@ -504,7 +528,8 @@ function tick(){
     if(!advanced){ pause(); pausedChunk=1; startOffset=0; pos=0; setStatus("idle","idle"); }
   }
   $("pos").textContent = fmt(pos);
-  if(!scrubbing) $("scrub").value = total ? (pos/total) : 0;
+  if(isPlaying && zoom > 1 && followOn && !scrubbing) followWindow(pos);
+  if(!scrubbing) $("scrub").value = total ? Math.max(0, Math.min(1, (pos - viewStart) / viewLen())) : 0;
   if(songSections.length && !scrubbing){ const i = sectionIndexAt(pos); if(i !== sectionIdx) updateSectionFocus(i); }
   updateMeters();
   raf = requestAnimationFrame(tick);
@@ -621,50 +646,121 @@ function sectionIndexAt(pos){
   return songSections[i].sec <= pos ? i : -1;
 }
 
+function viewLen(){ return total / zoom; }
+function clampView(v){ return Math.max(0, Math.min(v, total - viewLen())); }
+function maxZoomFor(){
+  let m = 1;
+  for(const z of ZOOM_LEVELS){ if(total / z >= MIN_VIEW_SEC) m = z; }
+  return m;
+}
+
 function renderSections(){
-  const band = $("sections");
-  band.innerHTML = "";
+  const band = $("sections"), lane = $("secLane");
+  lane.innerHTML = "";
+  zoom = 1; viewStart = 0; followOn = true; lastPruneView = -1;
+  lane.style.width = "100%"; lane.style.transform = "none";
   const usable = total ? songSectionsAll.filter(s => s.sec < total) : [];
-  if(usable.length < 2){ band.hidden = true; songSections = []; sectionIdx = -1; return; }
+  if(usable.length < 2){
+    band.hidden = true; $("zoomRow").hidden = true;
+    songSections = []; sectionIdx = -1; return;
+  }
   usable.forEach((s, i) => {
-    const pct = s.sec / total * 100;
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "sec-mark" + (pct < 4 ? " edge-l" : pct > 96 ? " edge-r" : "");
+    b.className = "sec-mark";
     b.dataset.i = i;
-    b.style.left = pct.toFixed(3) + "%";
+    b.style.left = (s.sec / total * 100).toFixed(3) + "%";
     b.title = s.label;
     b.innerHTML = '<span class="sec-label"></span><span class="sec-tick"></span>';
-    b.querySelector(".sec-label").textContent = s.label;
-    band.appendChild(b);
+    lane.appendChild(b);
   });
   songSections = usable;
-  band.hidden = false;
+  band.hidden = false; $("zoomRow").hidden = false;
+  $("overview").classList.add("ov-idle");
+  $("zoomOut").disabled = true; $("zoomIn").disabled = maxZoomFor() === 1;
   sectionIdx = -1;
+  setLabelTexts(); measureLabels();
+  applyWindow(true);
   updateSectionFocus(sectionIndexAt(currentPos()));
+}
+
+function setLabelTexts(){
+  const marks = $("secLane").children;
+  for(let i=0;i<marks.length;i++){
+    const s = songSections[i];
+    marks[i].querySelector(".sec-label").textContent = zoom >= 2 ? s.label + " · " + fmt(s.sec) : s.label;
+  }
+}
+
+function measureLabels(){
+  bandW = $("sections").clientWidth;
+  const marks = $("secLane").children;
+  labelW = [];
+  for(let i=0;i<marks.length;i++){
+    marks[i].classList.remove("is-clip");
+    labelW[i] = marks[i].querySelector(".sec-label").offsetWidth;
+  }
+}
+
+function pruneLabels(){
+  if(!songSections.length || !bandW) return;
+  const marks = $("secLane").children;
+  const vl = viewLen();
+  const info = [];
+  for(let i=0;i<marks.length;i++){
+    const x = (songSections[i].sec - viewStart) / vl * bandW;
+    marks[i].classList.remove("edge-l","edge-r");
+    if(x < -20 || x > bandW + 20){ marks[i].classList.add("is-clip"); continue; }
+    const half = labelW[i] / 2;
+    let lo, hi;
+    if(x - half < 2){ marks[i].classList.add("edge-l"); lo = x; hi = x + labelW[i]; }
+    else if(x + half > bandW - 2){ marks[i].classList.add("edge-r"); lo = x - labelW[i]; hi = x; }
+    else { lo = x - half; hi = x + half; }
+    info.push({ i, lo, hi });
+  }
+  // the current section's flag is lifted to its own row and never clips;
+  // base-row labels are pruned greedily left-to-right against each other
+  const kept = [];
+  for(const v of info){
+    if(v.i === sectionIdx){ marks[v.i].classList.remove("is-clip"); continue; }
+    if(kept.some(k => v.lo < k.hi + 6 && v.hi > k.lo - 6)) marks[v.i].classList.add("is-clip");
+    else { marks[v.i].classList.remove("is-clip"); kept.push(v); }
+  }
+  lastPruneView = viewStart;
+}
+
+function applyWindow(force){
+  $("secLane").style.transform = "translateX(" + (-(viewStart / total) * 100).toFixed(4) + "%)";
+  const ov = $("ovWin");
+  ov.style.left = (viewStart / total * 100).toFixed(3) + "%";
+  ov.style.width = (100 / zoom).toFixed(3) + "%";
+  if(force || Math.abs(viewStart - lastPruneView) > viewLen() * 0.02) pruneLabels();
 }
 
 function updateSectionFocus(idx){
   sectionIdx = idx;
-  const band = $("sections");
-  if(band.hidden) return;
-  const reach = window.matchMedia("(max-width:560px)").matches ? 1 : 2;
-  const marks = band.children;
-  const visible = [];
-  for(let i=0;i<marks.length;i++){
-    const d = idx < 0 ? Infinity : Math.abs(i - idx);
-    marks[i].classList.toggle("is-cur", d === 0);
-    marks[i].classList.toggle("is-near", d > 0 && d <= reach);
-    marks[i].classList.remove("is-clip");
-    if(d <= reach) visible.push({ el: marks[i], prio: d });
-  }
-  // hide lower-priority labels that overlap a higher-priority one
-  const kept = [];
-  visible.sort((a,b) => a.prio - b.prio);
-  for(const v of visible){
-    const r = v.el.querySelector(".sec-label").getBoundingClientRect();
-    if(kept.some(k => r.left < k.right + 3 && r.right > k.left - 3 && r.top < k.bottom && r.bottom > k.top)) v.el.classList.add("is-clip");
-    else kept.push(r);
+  const marks = $("secLane").children;
+  for(let i=0;i<marks.length;i++) marks[i].classList.toggle("is-cur", i === idx);
+  pruneLabels();
+}
+
+function setZoom(n){
+  const mz = maxZoomFor();
+  zoom = Math.max(1, Math.min(n, mz));
+  viewStart = zoom === 1 ? 0 : clampView(currentPos() - viewLen() / 2);
+  followOn = true;
+  $("secLane").style.width = (zoom * 100) + "%";
+  $("overview").classList.toggle("ov-idle", zoom === 1);
+  $("zoomOut").disabled = zoom === 1;
+  $("zoomIn").disabled = zoom === mz;
+  setLabelTexts(); measureLabels();
+  applyWindow(true);
+}
+
+function followWindow(pos){
+  if(pos > viewStart + viewLen() / 2){
+    viewStart = clampView(pos - viewLen() / 2);
+    applyWindow();
   }
 }
 
@@ -1016,15 +1112,82 @@ document.addEventListener("visibilitychange", ()=>{
 const scrub = $("scrub");
 scrub.addEventListener("input", e => {
   scrubbing=true;
-  const p = parseFloat(e.target.value)*total;
+  const p = viewStart + parseFloat(e.target.value) * viewLen();
   $("pos").textContent = fmt(p);
   if(songSections.length){ const i = sectionIndexAt(p); if(i !== sectionIdx) updateSectionFocus(i); }
 });
-scrub.addEventListener("change", e => { scrubbing=false; seek(parseFloat(e.target.value)*total); });
-$("sections").addEventListener("click", e => {
-  const b = e.target.closest(".sec-mark"); if(!b) return;
-  const s = songSections[+b.dataset.i]; if(!s || $("scrub").disabled) return;
-  seek(Math.min(s.sec, Math.max(0, total - 0.05)));
+scrub.addEventListener("change", e => { scrubbing=false; seek(viewStart + parseFloat(e.target.value) * viewLen()); });
+
+$("zoomIn").addEventListener("click", () => {
+  const next = ZOOM_LEVELS.find(z => z > zoom);
+  if(next) setZoom(next);
+});
+$("zoomOut").addEventListener("click", () => {
+  const lower = ZOOM_LEVELS.filter(z => z < zoom);
+  if(lower.length) setZoom(lower[lower.length - 1]);
+});
+
+// band: tap = jump to section, horizontal drag = pan the window
+let bandPtr = null;
+const bandEl = $("sections");
+bandEl.addEventListener("pointerdown", e => {
+  if(bandEl.hidden) return;
+  bandPtr = { id: e.pointerId, startX: e.clientX, startView: viewStart, panned: false, target: e.target };
+  try{ bandEl.setPointerCapture(e.pointerId); }catch(err){}
+});
+bandEl.addEventListener("pointermove", e => {
+  if(!bandPtr || e.pointerId !== bandPtr.id) return;
+  const dx = e.clientX - bandPtr.startX;
+  if(!bandPtr.panned && Math.abs(dx) > 6){ bandPtr.panned = true; followOn = false; }
+  if(bandPtr.panned && zoom > 1 && bandW){
+    viewStart = clampView(bandPtr.startView - dx / bandW * viewLen());
+    applyWindow();
+  }
+});
+bandEl.addEventListener("pointerup", e => {
+  if(!bandPtr || e.pointerId !== bandPtr.id) return;
+  if(!bandPtr.panned){
+    const b = bandPtr.target.closest(".sec-mark");
+    if(b && !scrub.disabled){
+      const s = songSections[+b.dataset.i];
+      if(s) seek(Math.min(s.sec, Math.max(0, total - 0.05)));
+    }
+  } else pruneLabels();
+  bandPtr = null;
+});
+bandEl.addEventListener("pointercancel", () => { bandPtr = null; });
+
+// overview strip: drag the window segment, or press elsewhere to center it there
+let ovPtr = null;
+const ovEl = $("overview");
+ovEl.addEventListener("pointerdown", e => {
+  if($("zoomRow").hidden || zoom === 1) return;
+  followOn = false;
+  const rect = ovEl.getBoundingClientRect();
+  const frac = (e.clientX - rect.left) / rect.width;
+  let grabOffset;
+  if(e.target === $("ovWin")) grabOffset = viewStart - frac * total;
+  else { grabOffset = -viewLen() / 2; viewStart = clampView(frac * total + grabOffset); applyWindow(); }
+  ovPtr = { id: e.pointerId, rect, grabOffset };
+  try{ ovEl.setPointerCapture(e.pointerId); }catch(err){}
+});
+ovEl.addEventListener("pointermove", e => {
+  if(!ovPtr || e.pointerId !== ovPtr.id) return;
+  const frac = (e.clientX - ovPtr.rect.left) / ovPtr.rect.width;
+  viewStart = clampView(frac * total + ovPtr.grabOffset);
+  applyWindow();
+});
+ovEl.addEventListener("pointerup", e => {
+  if(!ovPtr || e.pointerId !== ovPtr.id) return;
+  pruneLabels(); ovPtr = null;
+});
+ovEl.addEventListener("pointercancel", () => { ovPtr = null; });
+
+let bandResizeTimer = null;
+window.addEventListener("resize", () => {
+  if(bandEl.hidden) return;
+  clearTimeout(bandResizeTimer);
+  bandResizeTimer = setTimeout(() => { measureLabels(); pruneLabels(); }, 200);
 });
 
 initCatalog();
