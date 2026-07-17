@@ -37,6 +37,7 @@
   .opt:hover{background:var(--yellow);}
   .opt.hl{background:var(--yellow);}
   .opt-clear{color:var(--ink-soft);font-weight:600;}
+  .opt-album{font-size:11px;font-weight:600;color:var(--ink-soft);letter-spacing:.2px;margin-top:2px;}
   .slot-move{display:flex;flex-direction:column;gap:4px;flex-shrink:0;align-self:center;}
   .mv-btn{width:36px;height:26px;border:1.5px solid var(--ink);border-radius:7px;background:transparent;color:var(--ink);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;}
   .mv-btn svg{width:18px;height:18px;fill:currentColor;display:block;}
@@ -503,7 +504,7 @@ async function loadKey(keyFolder, keyName, preserve){
   $("pinned").style.display="none";
   $("mixer").innerHTML='<div class="empty">Loading...</div>'; setStatus("loading","idle");
 
-  songBase = BASE_URL + "/songs/" + currentSong.id + "/" + keyFolder;
+  songBase = BASE_URL + "/songs/" + encodeURIComponent(currentSong.id) + "/" + encodeURIComponent(keyFolder);
   bpm = currentSong.bpm || 72;
   $("albumDisp").textContent = currentSong.album || "—";
   $("bpmDisp").textContent = bpm; $("tsDisp").textContent = currentSong.timeSig || "4/4";
@@ -561,7 +562,7 @@ function chartUrl(song){
     if(/^https?:\/\//i.test(song.chart)) return song.chart;
     return BASE_URL + "/" + String(song.chart).replace(/^\/+/, "");
   }
-  return BASE_URL + "/songs/" + song.id + "/chart.pdf";
+  return BASE_URL + "/songs/" + encodeURIComponent(song.id) + "/chart.pdf";
 }
 function updateChartBtn(){
   $("chartBtn").style.display = chartUrl(currentSong) ? "inline-block" : "none";
@@ -697,7 +698,9 @@ function wireSlot(s, row){
     opts.appendChild(clr); currentOpts.push({ el:clr, value:null });
     SONGS.forEach((song,i)=>{
       if(f && !song.title.toLowerCase().includes(f) && !(song.album||"").toLowerCase().includes(f)) return;
-      const o=document.createElement("div"); o.className="opt"; o.textContent=song.title;
+      const o=document.createElement("div"); o.className="opt";
+      const t=document.createElement("div"); t.textContent=song.title; o.appendChild(t);
+      if(song.album){ const a=document.createElement("div"); a.className="opt-album"; a.textContent=song.album; o.appendChild(a); }
       o.addEventListener("mousedown", e=>{ e.preventDefault(); selectSong(i); });
       const k = currentOpts.length;
       o.addEventListener("mousemove", ()=> setHighlight(k));

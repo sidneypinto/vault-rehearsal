@@ -15,7 +15,7 @@
 #   python3 upload-song.py <song-id>       publish one song
 #   python3 upload-song.py all             publish every song in OUT_ROOT
 # ============================================================
-import json, os, sys, time, urllib.request, urllib.error, concurrent.futures, threading
+import json, os, sys, time, urllib.request, urllib.error, urllib.parse, concurrent.futures, threading
 
 SUPABASE_URL = "https://faaxtwjlrxnlotojfcqw.supabase.co"
 BUCKET = "songs"
@@ -48,7 +48,7 @@ def upload_file(local_path, object_path, retries=4):
     data = open(local_path, "rb").read()
     for attempt in range(retries):
         req = urllib.request.Request(
-            f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{object_path}",
+            f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{urllib.parse.quote(object_path)}",
             data=data, method="POST",
             headers={"Authorization": f"Bearer {KEY}", "apikey": KEY,
                      "Content-Type": ctype(local_path), "x-upsert": "false"})

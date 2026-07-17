@@ -8,9 +8,14 @@
 #   <OUT_ROOT>/<song-id>/<key>/manifest.json + <track>/0001.mp3 ...
 #   <OUT_ROOT>/songs.generated.json   (a catalog draft for you to finish)
 #
-# Song-id and key folder names are copied through EXACTLY, so name your
-# source song folders to match songs.json ids and key folders to match the
-# keys exactly, capital letters included (D, E, C, A).
+# Song folder naming convention (the folder name IS the song id, copied
+# through exactly):
+#   <song name>-<album>-<original key>-<bpm>
+#   e.g.  What A Beautiful Name-let there be light-D-68
+# The catalog draft parses title/album/key/bpm out of that name.
+# NOTE: the song name itself must not contain a hyphen (the album may).
+# Key folder names are also copied through exactly, capital letters
+# included (D, E, C, A).
 #
 # Usage:
 #   bash batch-chunk.sh                 (uses the paths below, skips done work)
@@ -128,6 +133,20 @@ if current_path and os.path.exists(current_path):
     except Exception as e:
         print("  (could not read current catalog:", e, ")")
 
+def parse_folder_name(sid, keys):
+    """Parse '<song name>-<album>-<original key>-<bpm>' into catalog fields.
+    The song name must not contain a hyphen; the album may."""
+    parts = [p.strip() for p in sid.split("-")]
+    if len(parts) < 4 or not parts[-1].isdigit():
+        return None
+    bpm = int(parts[-1]); key = parts[-2]
+    title = parts[0]; album = "-".join(parts[1:-2]).strip()
+    if not title or not album or not key:
+        return None
+    return {"id": sid, "title": title, "album": album, "bpm": bpm,
+            "timeSig": "4/4", "originalKey": key if key in keys else keys[0],
+            "keys": keys}
+
 out, new_ids = [], []
 for sid, keys in found.items():
     prev = existing.get(sid)
@@ -135,15 +154,18 @@ for sid, keys in found.items():
         entry = dict(prev); entry["id"] = sid; entry["keys"] = keys
         if entry.get("originalKey") not in keys: entry["originalKey"] = keys[0]
     else:
-        new_ids.append(sid)
-        entry = {"id": sid, "title": sid.replace("-", " ").title(), "album": "",
-                 "bpm": 0, "timeSig": "4/4", "originalKey": keys[0], "keys": keys}
+        entry = parse_folder_name(sid, keys)
+        if entry is None:
+            new_ids.append(sid)
+            entry = {"id": sid, "title": sid.replace("-", " ").title(), "album": "",
+                     "bpm": 0, "timeSig": "4/4", "originalKey": keys[0], "keys": keys}
     out.append(entry)
 
 json.dump({"songs": out}, open(gen_path, "w"), indent=2)
 print("Catalog draft written to:", gen_path)
 if new_ids:
-    print("New songs that still need a title, album, bpm, and original key:")
+    print("Folders that did not match '<song>-<album>-<key>-<bpm>' and still need")
+    print("a title, album, bpm, and original key filled in by hand:")
     for n in new_ids: print("   -", n)
 else:
     print("No new songs to fill in.")
