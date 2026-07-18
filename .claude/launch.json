@@ -6,6 +6,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "8734", "--directory", "webapp"],
       "port": 8734
+    },
+    {
+      "name": "vault-rehearsal-helper-ui",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "/Users/sidneypinto/Documents/GitHub/vault-rehearsal-helper", "--", "--port", "5199"],
+      "port": 5199
     }
   ]
 }
