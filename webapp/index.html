@@ -62,7 +62,8 @@
   .lib-title{font-size:13px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .lib-meta{font-size:9px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--ink-soft);margin-top:3px;}
   .brand-eyebrow{font-size:10px;letter-spacing:3px;text-transform:uppercase;font-weight:700;color:var(--ink-soft);margin-bottom:3px;}
-  .song-title{font-family:'Anton','Impact',sans-serif;font-size:34px;line-height:.95;letter-spacing:.5px;text-transform:uppercase;margin:0 0 12px;}
+  .song-title{font-family:'Anton','Impact',sans-serif;font-size:34px;line-height:.95;letter-spacing:.5px;text-transform:uppercase;margin:0 0 3px;}
+  .song-album{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink-soft);font-weight:600;margin:0 0 12px;}
 
   .topbar{display:flex;justify-content:flex-end;align-items:center;padding:12px 20px 0;}
   .brand{font-size:10px;letter-spacing:3px;text-transform:uppercase;font-weight:700;}
@@ -166,6 +167,7 @@
   <div class="app">
     <div class="nowplaying">
       <div class="song-title" id="songTitle">--</div>
+      <div class="song-album" id="albumDisp"></div>
       <div class="np-row">
         <select class="sel key-sel" id="keySel" title="Key"></select>
         <button class="sel chart-btn" id="chartBtn" style="display:none">Chord Chart</button>
@@ -184,7 +186,6 @@
     <div class="band">
       <div class="bandrow">
         <div class="infobar">
-          <div class="field"><label>Album</label><div class="display" id="albumDisp">--</div></div>
           <div class="field"><label>BPM</label><div class="display" id="bpmDisp">--</div></div>
           <div class="field"><label>Time</label><div class="display" id="tsDisp">--</div></div>
         </div>
@@ -565,8 +566,7 @@ async function loadKey(keyFolder, keyName, preserve){
   applyGains();
   if(preserve){ setResumeFromPos(preserve.pos); }
 
-  const musicCount = tracks.filter(t=>!t.special).length;
-  $("sub").textContent = musicCount + " tracks \u00B7 key " + keyName;
+  $("sub").textContent = "";
   $("total").textContent = fmt(total);
   $("pos").textContent = fmt(songStartSec());
   $("scrub").value = total ? (songStartSec()/total) : 0;
@@ -968,7 +968,7 @@ function setIdlePlayer(){
   $("songTitle").textContent = "\u2014";
   updateChartBtn();
   $("sub").textContent = "No song loaded";
-  $("albumDisp").textContent = "--"; $("bpmDisp").textContent = "--"; $("tsDisp").textContent = "--";
+  $("albumDisp").textContent = ""; $("bpmDisp").textContent = "--"; $("tsDisp").textContent = "--";
   $("keySel").innerHTML = "";
   $("pinned").style.display = "none";
   $("mixer").innerHTML = '<div class="empty">Pick songs in the setlist, then press play on a slot.</div>';
