@@ -67,6 +67,12 @@ def list_objects(prefix):
             offset += 100
     return keys
 
+def bpm_token(bpm):
+    """Canonical BPM token — MUST match bpmToken() in vault-rehearsal-helper
+    src/core/plan/song-id.ts: render at 2 decimals, then strip trailing zeros
+    and any trailing dot (72 -> '72', 72.5 -> '72.5', 72.50 -> '72.5')."""
+    return f"{float(bpm):.2f}".rstrip("0").rstrip(".")
+
 def new_id_for(row):
     title = (row.get("title") or "").strip()
     album = (row.get("album") or "").strip()
@@ -74,7 +80,7 @@ def new_id_for(row):
     bpm = row.get("bpm")
     if not title or not album or not key or not bpm:
         return None
-    return f"{title}-{album}-{key}-{int(bpm)}"
+    return f"{title}-{album}-{key}-{bpm_token(bpm)}"
 
 rows = api("/rest/v1/songs?select=*&order=title.asc")
 print(f"{len(rows)} songs in the table" + (" (dry run)" if DRY else ""))

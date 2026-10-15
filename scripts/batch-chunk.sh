@@ -110,7 +110,7 @@ echo "Chunking done. $songs songs scanned, $keys key versions chunked, $skipped 
 # ---- catalog draft ----
 if command -v python3 >/dev/null 2>&1; then
   python3 - "$OUT_ROOT" "$CURRENT_CATALOG" "$OUT_ROOT/songs.generated.json" <<'PYEOF'
-import json, os, sys
+import json, os, re, sys
 out_root, current_path, gen_path = sys.argv[1], sys.argv[2], sys.argv[3]
 
 found = {}
@@ -137,9 +137,9 @@ def parse_folder_name(sid, keys):
     """Parse '<song name>-<album>-<original key>-<bpm>' into catalog fields.
     The song name must not contain a hyphen; the album may."""
     parts = [p.strip() for p in sid.split("-")]
-    if len(parts) < 4 or not parts[-1].isdigit():
+    if len(parts) < 4 or not re.fullmatch(r"\d+(\.\d+)?", parts[-1]):
         return None
-    bpm = int(parts[-1]); key = parts[-2]
+    n = float(parts[-1]); bpm = int(n) if n.is_integer() else round(n, 2); key = parts[-2]
     title = parts[0]; album = "-".join(parts[1:-2]).strip()
     if not title or not album or not key:
         return None

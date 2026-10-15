@@ -25,15 +25,21 @@ Rules (enforced by the catalog parser in `batch-chunk.sh`):
 - **`<original key>`** — a musical key token, copied through exactly, capitals kept
   (`D`, `E`, `C`, `A`, `Bb`, `F#`, …). Must match one of the key sub-folders (below);
   if it doesn't, the first key folder is used instead.
-- **`<bpm>`** — integer, the **last** `-`-separated token, digits only.
-- Parser logic: split on `-`; last token = bpm (must be all digits), second-to-last =
-  original key, first = title, everything in between = album.
+- **`<bpm>`** — the real tempo, the **last** `-`-separated token: digits with an
+  optional decimal part (regex `\d+(\.\d+)?`), at most 2 decimals, no trailing zeros
+  (`68`, `72.5`, `128.04` — never `72.50`). Canonical form: render at 2 decimals then
+  strip trailing zeros and any trailing dot. Its numeric value must equal the `bpm`
+  column in the `songs` table.
+- Parser logic: split on `-`; last token = bpm (must match `\d+(\.\d+)?`), second-to-last =
+  original key, first = title, everything in between = album. (The split is on `-`, and
+  the title is hyphen-free, so a `.` in the last token is unambiguous.)
 
 Example:
 ```
 What A Beautiful Name-let there be light-D-68/
+Highest Praise-Single-A-72.5/
 ```
-→ title `What A Beautiful Name`, album `let there be light`, originalKey `D`, bpm `68`.
+→ e.g. title `Highest Praise`, album `Single`, originalKey `A`, bpm `72.5`.
 
 The folder name is used raw as a storage path segment and URL-encoded when fetched,
 so keep it filesystem- and URL-safe: **no slashes**, avoid characters that need
